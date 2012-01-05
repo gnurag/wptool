@@ -1,0 +1,131 @@
+#!/usr/bin/env ruby
+
+require 'rubygems'
+require 'optparse'
+require 'ostruct'
+require 'open-uri'
+
+require 'wordpress'
+
+# Create a file named ~/.wptool.rb and save settings in following format.
+# ######
+# # WPTool settings
+# # Syntax: Ruby 1.9
+# AUTH = {
+#   username: "admin",
+#   password: "rot13",
+#   host: "http://example.com/wp-login.php",
+#   asset_host: "http://img.example.com"
+#   scp_target: "login@example.com:/var/www/html/example.com/uploads/"
+# }
+# ######
+load File.expand_path '~/.wptool.rb'
+
+# Settings
+Version = '0.0.1'
+
+class WPToolOptions
+
+  # Returns a structure describing options
+  def self.parse(args)
+    # Setting default options here.
+    options = OpenStruct.new
+    options.verbose = false
+    options.title    = nil
+    options.image    = nil
+    options.message  = nil
+    options.tags     = []
+
+    
+    opts = OptionParser.new do |opts|
+      ## Print a banner
+      opts.banner = "Usage: #{opts.program_name} -t TITLE -i IMAGE.jpg -m MESSAGE"
+
+      opts.separator ""
+      opts.separator "Post specific options:"
+
+      # Post title - required
+      opts.on("-t", "--title TITLE", "Title for the post.") do |title|
+        options.title = title
+      end
+
+      # Post body - required
+      opts.on("-m", "--message MESSAGE", "Message body to be posted.") do |message|
+        options.message = message
+      end
+
+      # Embed image - optional
+      opts.on("-i", "--image [IMAGE]", "Insert an image at the top of the post.") do |image|
+        options.image = image
+      end
+
+      # Post tags - optional
+      opts.on("-g", "--tags [TAG1,TAG2,TAG]", Array, "Comma-separated list of tags for the post.") do |tags|
+        options.tags = tags
+      end
+
+      opts.separator ""
+      opts.separator "General options:"
+
+      ##  Verbose mode
+      opts.on("-v", "--verbose", "Run verbosely.") do |verbose|
+        options.verbose = verbose
+      end
+      
+      ## Print a tail
+      opts.on_tail("-h", "--help", "Show this message.") do
+        puts opts
+        exit
+      end
+
+      ## Prints version
+      opts.on_tail("-V", "--version", "Show version.") do
+        puts "wptool version #{Version}"
+        exit
+      end
+      
+    end # Ends OptionParser.new
+
+    opts.parse!(args)
+    return options
+  end # Ends self.parse  
+end # Ends class WPToolOptions
+
+# Parse the command line arguments.
+options = WPToolOptions.parse(ARGV)
+
+if options.title.nil?
+  puts "Error: Post title is missing."
+elsif options.image.nil?
+  puts "Error: Image is missing."
+elsif options.message.nil?
+  puts "Error: Post message is missing."
+end
+
+
+# Start scp-ing the image.
+if options.title and options.image and options.message
+  fileinfo = `identify #{options.image}`
+  width,height = fileinfo.split(' ')[2].split('x')
+
+  basefile = File.basename(options.image)
+  `scp #{options.image} #{AUTH[:scp_target]}`
+
+  body = <<EOTXT
+<a href="#{AUTH[:asset_host]}/#{basefile}"><img alt="" src="#{AUTH[:asset_host]}/#{basefile}" class="alignnone" width="#{width}" height="#{height}" /></a>
+
+#{options.message}
+EOTXT
+
+  # Login to wordpress and publish the post
+  wp = Wordpress::Client.new(AUTH[:username], AUTH[:password], AUTH[:host])
+  if wp.valid_user? # If the user account is valid, try to publish the post.
+    res = wp.post(options.title, body, options.tags)
+    if res and res["rsp"] and res["rsp"]["post"]
+      uri = URI.parse(res["rsp"]["post"]["url"])
+      puts "Published at: #{uri.scheme}://#{uri.host}#{uri.path}"
+    elsif res and res["rsp"] and res["rsp"]["err"]
+      puts res["rsp"]["err"]["msg"]
+    end
+  end
+end
