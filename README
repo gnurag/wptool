@@ -2,6 +2,7 @@ WPTool:
   A utility to publish posts to a Wordpress blog from the command line.
 
 Dependencies:
+  * ImageMagick command line tools (identify).
   * Ruby 1.9.x
   * rubygems
   * wordpress gem > 0.2.x
